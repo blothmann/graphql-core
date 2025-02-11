@@ -67,6 +67,29 @@ def coerce_input_value(
         type_ = cast(GraphQLList, type_)
         item_type = type_.of_type
         if is_iterable(input_value):
+            if isinstance(input_value, list):
+                _type = item_type
+                is_non_null = is_non_null_type(_type)
+                if is_non_null:
+                    _type = cast(GraphQLNonNull, _type).of_type
+                if is_leaf_type(_type):
+                    _type = cast(GraphQLScalarType, _type)
+                    result = list(input_value)
+                    i = 0
+                    n = len(result)
+                    try:
+                        while i < n:
+                            item_value = input_value[i]
+                            if item_value is not None and item_value is not Undefined:
+                                result[i] = _type.parse_value(item_value)
+                            elif is_non_null:
+                                break
+                            i += 1
+                        else:
+                            return result
+                    except GraphQLError:
+                        # If a parse error occurs, fall through to the error path.
+                        input_value = result
             coerced_list: List[Any] = []
             append_item = coerced_list.append
             for index, item_value in enumerate(input_value):
