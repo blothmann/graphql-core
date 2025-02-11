@@ -1,6 +1,5 @@
 from typing import Any, Callable, Dict, List, Optional, Union, cast
 
-
 from ..error import GraphQLError
 from ..pyutils import (
     Path,
@@ -21,6 +20,8 @@ from ..type import (
     is_list_type,
     is_non_null_type,
     GraphQLNonNull,
+    GRAPHQL_MIN_INT,
+    GRAPHQL_MAX_INT,
 )
 
 __all__ = ["coerce_input_value"]
@@ -37,6 +38,16 @@ def default_on_error(
         error_prefix += f" at 'value{print_path_list(path)}'"
     error.message = error_prefix + ": " + error.message
     raise error
+
+
+def all_int(input_value):
+    int_range = range(GRAPHQL_MIN_INT, GRAPHQL_MAX_INT + 1)
+    for i in input_value:
+        if type(i) is not int:
+            return False
+        if i not in int_range:
+            return False
+    return True
 
 
 def coerce_input_value(
@@ -66,30 +77,45 @@ def coerce_input_value(
     if is_list_type(type_):
         type_ = cast(GraphQLList, type_)
         item_type = type_.of_type
-        if is_iterable(input_value):
-            if isinstance(input_value, list):
-                _type = item_type
-                is_non_null = is_non_null_type(_type)
-                if is_non_null:
-                    _type = cast(GraphQLNonNull, _type).of_type
+        input_value_is_list = type(input_value) == list
+        if input_value_is_list or is_iterable(input_value):
+            if is_non_null_type(item_type):
+                _type = cast(GraphQLNonNull, item_type).of_type
                 if is_leaf_type(_type):
                     _type = cast(GraphQLScalarType, _type)
-                    result = list(input_value)
+
+            _type = item_type
+            item_type_is_non_null = is_non_null_type(_type)
+            if item_type_is_non_null:
+                _type = cast(GraphQLNonNull, _type).of_type
+            if is_leaf_type(_type):
+                _type = cast(GraphQLScalarType, _type)
+
+                # specialization for list of ints
+                if _type.name == 'Int':
+                    if not input_value_is_list:
+                        input_value = list(input_value)
+                    if all_int(input_value):
+                        return input_value
+                else:
+                    input_value = list(input_value)
+
                     i = 0
-                    n = len(result)
+                    n = len(input_value)
                     try:
                         while i < n:
                             item_value = input_value[i]
                             if item_value is not None and item_value is not Undefined:
-                                result[i] = _type.parse_value(item_value)
-                            elif is_non_null:
+                                input_value[i] = _type.parse_value(item_value)
+                            elif item_type_is_non_null:
+                                # item must not be null, fall through to the error path
                                 break
                             i += 1
                         else:
-                            return result
+                            return input_value
                     except GraphQLError:
                         # If a parse error occurs, fall through to the error path.
-                        input_value = result
+                        pass
             coerced_list: List[Any] = []
             append_item = coerced_list.append
             for index, item_value in enumerate(input_value):
